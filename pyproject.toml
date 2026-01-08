@@ -1,0 +1,12 @@
+[project]
+name = "rapp"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pyannote-audio>=4.0.3",
+    "torch>=2.8.0",
+    "polars>=1.8.0",
+    "tqdm>=4.67.1",
+]
