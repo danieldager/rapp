@@ -4,21 +4,42 @@ VAD Pipeline for audio processing with multiprocessing support.
 Dataset-agnostic: processes any directory structure, stores absolute paths.
 """
 
-import argparse
-import json
-import multiprocessing as mp
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import datetime
+import random
+import argparse
+import warnings
 from pathlib import Path
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import polars as pl
 import torch
 import torchaudio
+
+# Suppress torchaudio 2.9+ migration warnings
+warnings.filterwarnings(
+    "ignore", message=".*In 2.9, this function's implementation will be changed.*"
+)
+warnings.filterwarnings(
+    "ignore", message=".*StreamingMediaDecoder has been deprecated.*"
+)
+
 from ten_vad import TenVad
 from vad_utils import get_task_shard
+
+
+def set_seeds(seed=42):
+    """Set seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 def get_runs(flags):
@@ -198,6 +219,7 @@ def compute_segment_stats(durations: list[float]) -> dict:
 
 def process_single_wav(args):
     """Process a single WAV file - designed for multiprocessing."""
+
     wav_path, hop_size, threshold = args
 
     try:
@@ -226,20 +248,17 @@ def process_single_wav(args):
             waveform = resampler(waveform)
             sample_rate = TARGET_SR
 
-        # TODO i'm very unsure about this chunk
-        # Convert to int16 for TenVAD
-        # torchaudio loads as float32 in [-1, 1]
         data = waveform.squeeze().numpy()
         data = (data * 32767).astype(np.int16)
 
-        duration = len(data) / sample_rate
+        duration = len(data) / sample_rate  # in seconds
+        # if duration < 1.0:
+        #     return create_error_record(
+        #         str(wav_path), f"Audio too short: {duration:.2f}s"
+        #     )
 
         # TenVad process
         num_frames = len(data) // hop_size
-        if num_frames < hop_size:
-            return create_error_record(
-                str(wav_path), f"Audio too short: {len(data)} samples"
-            )
 
         frames = data[: num_frames * hop_size].reshape(-1, hop_size)
         flags = np.empty(num_frames, dtype=np.uint8)
@@ -338,7 +357,7 @@ def process_wavs_parallel(wavs, hop_size, threshold, max_workers):
             try:
                 result = future.result()
                 if result is not None:
-                    if "error" in result:
+                    if not result.get("success", False):
                         errors += 1
                         print(
                             f"WARNING: Error processing {wav_path.name}: {result['error']}",
@@ -398,6 +417,8 @@ def main():
         args.workers = mp.cpu_count()
     print(f"Using {args.workers} parallel workers")
 
+    set_seeds(42)  # Set seed for main process
+
     # Determine output files
     manifest_path = Path(args.manifest)
     output_dir = Path("metadata") / manifest_path.stem / "ten"
@@ -425,6 +446,9 @@ def main():
                 file=sys.stderr,
             )
             sys.exit(1)
+
+        # Sort results by path to ensure deterministic output order
+        results.sort(key=lambda x: x["path"])
 
         # Save Parquet
         pl.DataFrame(results).write_parquet(output_file, compression="zstd")

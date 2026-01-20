@@ -1,7 +1,12 @@
+# TODO: speed up start up time !
+
 import os
 import sys
 import time
 import argparse
+import random
+import warnings
+import numpy as np
 import polars as pl
 from pathlib import Path
 
@@ -49,6 +54,19 @@ def load_env():
                 print(f"  Loaded {key.strip()}")
 
 
+def set_seeds(seed=42):
+    """Set seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    print(f"Seeds set to {seed}")
+
+
 def setup_model_and_pipeline(hf_token: str, device: torch.device):
     """Load model and instantiate VAD pipeline."""
 
@@ -70,7 +88,7 @@ def setup_model_and_pipeline(hf_token: str, device: torch.device):
     pipeline.instantiate(
         {
             "min_duration_on": 0.0,  # remove speech regions shorter than this
-            "min_duration_off": 0.3,  # fill non-speech regions shorter than this
+            "min_duration_off": 0.0,  # fill non-speech regions shorter than this
         }
     )
 
@@ -204,10 +222,10 @@ def process_single_file(audio_dict: dict, pipeline: VoiceActivityDetection) -> d
     duration = waveform.shape[1] / sample_rate
 
     # If duration is too short
-    if duration <= 1.0:
-        error_msg = f"Error: {path}, Only {duration} seconds long)"
-        print(error_msg, file=sys.stderr)
-        return create_error_record(path, error_msg)
+    # if duration <= 1.0:
+    #     error_msg = f"Error: {path}, Only {duration} seconds long)"
+    #     print(error_msg, file=sys.stderr)
+    #     return create_error_record(path, error_msg)
 
     # Check VAD
     # Pyannote pipeline handles resampling internally
@@ -321,7 +339,10 @@ def process_files(
 
 def merge_fragments(fragment_dir: Path, final_path: Path) -> None:
     """Combines fragment_0, fragment_1... into shard_N.parquet."""
-    fragment_files = list(fragment_dir.glob("fragment_*.parquet"))
+    fragment_files = sorted(
+        list(fragment_dir.glob("fragment_*.parquet")),
+        key=lambda p: int(p.stem.split("_")[1]),
+    )
     pl.read_parquet(fragment_files).write_parquet(final_path, compression="zstd")
     for f in fragment_files:
         f.unlink()
@@ -339,6 +360,10 @@ if __name__ == "__main__":
 
     # Load environment
     load_env()
+
+    # Set seeds for reproducibility
+    set_seeds()
+
     hf_token = os.getenv("HF_TOKEN")
     if hf_token is None:
         raise RuntimeError(

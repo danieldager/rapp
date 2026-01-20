@@ -17,7 +17,7 @@ def get_task_shard(
 
     if suffix == ".txt":
         # Read all lines
-        all_paths = [l.strip() for l in path.read_text().splitlines() if l.strip()]
+        all_paths = sorted([l.strip() for l in path.read_text().splitlines() if l.strip()])
 
         total_files = len(all_paths)
         chunk_size = total_files // array_count
@@ -59,7 +59,8 @@ def get_task_shard(
         return (
             total_files,
             length,
-            lf.slice(start_idx, length)
+            lf.sort(col_name)
+            .slice(start_idx, length)
             .select(col_name)
             .collect()
             .get_column(col_name)

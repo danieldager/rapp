@@ -23,25 +23,28 @@ fi
 
 mkdir -p logs
 
-echo "=========================================="
 echo "TenVAD Pipeline"
-echo "=========================================="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Manifest: $MANIFEST"
 echo "CPUs: $SLURM_CPUS_PER_TASK"
 echo "Memory: ${SLURM_MEM_PER_NODE}"
 echo "Started: $(date)"
-echo "=========================================="
 
 export LD_LIBRARY_PATH=/shared/opt/linux-rocky9-x86_64/gcc-11.4.1/ffmpeg-6.1.1-gynsavpssxgp4ewikkmsa6jswfgi3ycg/lib:/shared/opt/linux-rocky9-x86_64/gcc-11.4.1/llvm-17.0.6-ibcxgmojxutzsgeoyywyraq5fmvycsfl/lib/x86_64-unknown-linux-gnu:$LD_LIBRARY_PATH
 
 module purge
 module load ffmpeg llvm
 
-PYTHONUNBUFFERED=1 UV_VERBOSE=1 \
-uv run --verbose scripts/vad_ten.py "$MANIFEST" \
+# Use .venv directly to skip uv checks
+PYTHON=".venv/bin/python"
+if [ ! -x "$PYTHON" ]; then
+    echo "Error: Virtual environment python not found at $PYTHON"
+    exit 1
+fi
+
+PYTHONUNBUFFERED=1 \
+$PYTHON scripts/vad_ten.py "$MANIFEST" \
     --workers "$SLURM_CPUS_PER_TASK"
 
-echo "=========================================="
+echo ""
 echo "VAD completed: $(date)"
-echo "=========================================="
