@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=vad
-#SBATCH --output=logs/vad_%A_%a.out
-#SBATCH --error=logs/vad_%A_%a.err
+#SBATCH --job-name=vad-pyannote
+#SBATCH --output=logs/vad-pyannote_%A_%a.out
+#SBATCH --error=logs/vad-pyannote_%A_%a.err
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=24:00:00
-#SBATCH --partition=erc-dupoux,erc-cristia
+#SBATCH --time=12:00:00
+#SBATCH --partition=erc-dupoux,gpu-p1,gpu-p2
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-3
+#SBATCH --array=0-2
 
 if [ -z "$1" ]; then
     echo "Usage: sbatch vad.slurm <MANIFEST_FILE>"
@@ -32,23 +32,11 @@ export LD_LIBRARY_PATH=/shared/opt/linux-rocky9-x86_64/gcc-11.4.1/ffmpeg-6.1.1-g
 module purge
 module load ffmpeg
 
-echo ""
-echo "Setting up environment..."
-echo ""
-echo "Node: $(hostname)"
-echo "Python: $(which python3)"
-echo "UV: $(which uv)"
-echo "UV version: $(uv --version)"
-echo "Working dir: $(pwd)"
-echo "Venv exists: $([ -d .venv ] && echo 'yes' || echo 'no')"
-echo "Venv lock: $([ -f .venv/.lock ] && echo 'exists' || echo 'missing')"
+PYTHONUNBUFFERED=1 UV_VERBOSE=1 \
+uv run --verbose scripts/vad_pyannote.py "$MANIFEST" \
+    --array-id "$SLURM_ARRAY_TASK_ID" \
+    --array-count "$SLURM_ARRAY_TASK_COUNT"
 
-# uv run python -c "import sys; print('Python sys.path:', sys.path, sys.executable)"
-
-echo ""
-echo "Running VAD Pipeline..."
-echo ""
-PYTHONUNBUFFERED=1 UV_VERBOSE=1 uv run --no-sync vad.py "$MANIFEST" --array-id "$SLURM_ARRAY_TASK_ID" --array-count "$SLURM_ARRAY_TASK_COUNT"
 EXIT_CODE=$?
 
 echo ""

@@ -9,4 +9,6 @@ dependencies = [
     "torch>=2.8.0",
     "polars>=1.8.0",
     "tqdm>=4.67.1",
+    "ten-vad>=1.0.6.8",
+    "plotly>=6.5.2",
 ]
