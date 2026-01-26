@@ -17,7 +17,7 @@ from torch.utils.data import Dataset, DataLoader
 from pyannote.audio import Model
 from pyannote.audio.pipelines import VoiceActivityDetection
 
-from vad_utils import get_task_shard
+from scripts.vad.utils import get_task_shard
 
 
 class AudioDataset(Dataset):

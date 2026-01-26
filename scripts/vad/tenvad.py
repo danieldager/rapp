@@ -27,7 +27,7 @@ warnings.filterwarnings(
 )
 
 from ten_vad import TenVad
-from vad_utils import get_task_shard
+from scripts.vad.utils import get_task_shard
 
 
 def set_seeds(seed=42):
