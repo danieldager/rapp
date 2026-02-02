@@ -5,23 +5,18 @@
 #SBATCH --partition=erc-dupoux,gpu-p1,gpu-p2
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:3
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
-#SBATCH --time=12:00:00
-
-# Setup environment
-# source ~/.bashrc
-# conda activate amela_train
+#SBATCH --time=24:00:00
 
 # Extract number of GPUs from SLURM gres parameter
 NUM_GPUS=$(echo $SLURM_STEP_GPUS | tr "," "\n" | wc -l)
 
-# export TORCH_DISTRIBUTED_DEBUG=DETAIL
-
 # Add current working directory to Python Path
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 export PYTHONUNBUFFERED=1
+# export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
 uv run --frozen torchrun \
     --nproc_per_node=$NUM_GPUS \

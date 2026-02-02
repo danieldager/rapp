@@ -18,11 +18,11 @@ from torch.utils.data import Dataset, DataLoader, IterableDataset
 
 
 # CONSTANTS
-SEED = 42
+SEED = 101
 MAX_TOKENS = 2048
-BOS_TOKEN_ID = 2000
-EOS_TOKEN_ID = 2001
-VOCAB_SIZE = 2002  # 2000 tokens + BOS + EOS
+BOS_TOKEN_ID = 256
+EOS_TOKEN_ID = 257
+VOCAB_SIZE = 258  # 256 tokens + BOS + EOS
 SHUFFLE_BUFFER = 1000
 
 

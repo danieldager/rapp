@@ -1,7 +1,7 @@
 from torch import nn
 
 from transformers import (
-    PretrainedConfig, 
+    PretrainedConfig,
     PreTrainedModel,
 )
 
@@ -10,6 +10,7 @@ from scripts.train.datasets import (
     BOS_TOKEN_ID,
     EOS_TOKEN_ID,
 )
+
 
 class LSTMConfig(PretrainedConfig):
     model_type = "lstm"
@@ -63,6 +64,21 @@ class LSTM(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=0.02)
             if module.bias is not None:
                 module.bias.data.zero_()
+        elif isinstance(module, nn.LSTM):
+            # LSTM-specific initialization for better gradient flow
+            for name, param in module.named_parameters():
+                if "weight_ih" in name:
+                    # Input-hidden weights: Xavier uniform
+                    nn.init.xavier_uniform_(param.data)
+                elif "weight_hh" in name:
+                    # Hidden-hidden weights: Orthogonal (crucial for LSTMs)
+                    nn.init.orthogonal_(param.data)
+                elif "bias" in name:
+                    # Set biases to zero, except forget gate bias to 1.0
+                    param.data.zero_()
+                    # Forget gate is the second quarter of the bias vector
+                    n = param.size(0)
+                    param.data[n // 4 : n // 2].fill_(1.0)
 
     def forward(self, input_ids, labels=None, attention_mask=None, **kwargs):
         embeddings = self.embedding(input_ids)

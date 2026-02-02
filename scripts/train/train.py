@@ -197,11 +197,11 @@ if __name__ == "__main__":
         # Logging & Saving
         logging_steps=10,
         save_strategy="steps",
-        save_steps=50,
+        save_steps=100,
         save_total_limit=2,
         # Evaluation
         eval_strategy="steps",
-        eval_steps=50,
+        eval_steps=100,
         metric_for_best_model="loss",
         greater_is_better=False,
         load_best_model_at_end=True,  # TODO: do I need ?

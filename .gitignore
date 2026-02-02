@@ -1,5 +1,5 @@
 # Python-generated files
-__pycache__/
+__pycache__
 *.py[oc]
 build/
 dist/
@@ -16,4 +16,4 @@ metadata
 archive
 tokens
 weights
-checkpoints
+data
