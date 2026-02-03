@@ -7,10 +7,6 @@ import time
 from pathlib import Path
 from typing import Any, Tuple
 
-# Add repo root to path
-repo_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(repo_root))
-
 import numpy as np
 import polars as pl
 import torch
@@ -36,13 +32,13 @@ def load_checkpoint(checkpoint_path: str, device: str = "cuda") -> Tuple[Any, An
         Tuple of (model, config)
     """
     checkpoint_dir = Path(checkpoint_path)
-    
+
     # Load config
     with open(checkpoint_dir / "config.json", "r") as f:
         config_dict = json.load(f)
-    
+
     model_type = config_dict.get("model_type", "gpt2")
-    
+
     # Create model
     if model_type == "lstm":
         config = LSTMConfig(**config_dict)
@@ -50,21 +46,21 @@ def load_checkpoint(checkpoint_path: str, device: str = "cuda") -> Tuple[Any, An
     else:
         config = GPT2Config(**config_dict)
         model = GPT2LMHeadModel(config)
-    
+
     # Load weights
     state_dict = load_file(str(checkpoint_dir / "model.safetensors"))
-    
+
     # Handle GPT2 weight tying: lm_head.weight is tied to transformer.wte.weight
     if model_type == "gpt2" and "lm_head.weight" not in state_dict:
         if "transformer.wte.weight" in state_dict:
             state_dict["lm_head.weight"] = state_dict["transformer.wte.weight"]
-    
+
     model.load_state_dict(state_dict)
-    
+
     # Move to device and eval
     model.to(device)  # type: ignore
     model.eval()
-    
+
     print(f"✓ Loaded {model_type} model from {checkpoint_path}")
     return model, config
 
@@ -295,7 +291,7 @@ def prepare_and_encode_swuggy(
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+
     prepare_and_encode_swuggy(
         raw_parquet_pattern="/store/projects/lexical-benchmark/swuggy/data/*.parquet",
         output_tokens_dir="/scratch2/ddager/rapp/tokens/swuggy_spidr_base",

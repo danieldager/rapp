@@ -30,7 +30,9 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURMD_NODENAME | GPU: $CUDA_VISIBLE_DEVICES"
 echo "Started: $(date)"
 
-PYTHONUNBUFFERED=1 \
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+export PYTHONUNBUFFERED=1
+
 uv run --frozen "$SCRIPT_PATH"
 
 echo ""

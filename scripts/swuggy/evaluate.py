@@ -8,10 +8,6 @@ import sys
 from pathlib import Path
 import time
 
-# Add repo root to path
-repo_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(repo_root))
-
 import polars as pl
 import torch
 import webdataset as wds

@@ -36,7 +36,10 @@ echo "Model: $MODEL"
 echo "Token Directory: tokens / {dataset}_$MODEL_NAME"
 echo "Started: $(date)"
 
-PYTHONUNBUFFERED=1 \
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+export PYTHONUNBUFFERED=1
+
+uv run --frozen scripts/encode/encode.py \
 uv run --frozen scripts/encode/encode.py \
     --manifest "$MANIFEST_PATH" \
     --model "$MODEL" \
