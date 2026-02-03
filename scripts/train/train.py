@@ -1,21 +1,30 @@
-"""LSTM Language Model Training Script
+"""Language Model Training Script
 
-OPTIMAL HYPERPARAMETERS (discovered Feb 2026 via systematic debugging):
+Supports both LSTM and GPT-2 architectures with architecture-specific optimal configurations.
+
+LSTM OPTIMAL CONFIG (discovered Feb 2026 via systematic debugging):
 - Model: 256/256/2 (embedding_dim/hidden_size/num_layers)
 - Optimizer: Adam lr=1e-2, beta2=0.99
 - Gradient clipping: 5.0
 - Dropout: 0.0
 - Weight decay: 0.0
-- Batch size: 32 × 4 accumulation = 128 effective
-- Scheduler: Cosine with 200 warmup steps
+- Batch size: 32 × 1 accumulation × 3 GPUs = 96 effective
+- Scheduler: Constant (no warmup)
+- Results: Consistent convergence to ~1.9 loss at 40 steps, ~1.7 at 100 steps
 
-Results: Consistent convergence to ~1.9 loss at 40 steps, ~1.7 at 100 steps
-Key insight: Smaller models with higher LR >> Large models with low LR for this task
+GPT-2 CONFIG (from paper):
+- Model: 768/12/12 (n_embd/n_layer/n_head)
+- Optimizer: AdamW lr=1e-4, beta2=0.98
+- Batch size: 32 × 4 accumulation × 3 GPUs = 384 effective
+- Scheduler: inverse_sqrt with 1000 warmup steps
+- Max steps: 100,000
 """
 
 import os
+import argparse
 from time import time
 
+import torch
 from transformers import (
     GPT2Config,
     GPT2LMHeadModel,
@@ -37,7 +46,101 @@ from scripts.train.datasets import (
 )
 
 from scripts.train.models import LSTM, LSTMConfig
-from scripts.train.utils import print_training_summary
+from scripts.train.utils import print_training_summary, get_model_timestamp
+
+
+# ============================================================================
+# MODEL & TRAINING CONFIGURATIONS
+# ============================================================================
+
+LSTM_MODEL_CONFIG = {
+    "vocab_size": VOCAB_SIZE,
+    "embedding_dim": 256,
+    "hidden_size": 256,
+    "num_layers": 2,
+    "dropout": 0.0,
+    "bos_token_id": BOS_TOKEN_ID,
+    "eos_token_id": EOS_TOKEN_ID,
+}
+
+LSTM_TRAINING_CONFIG = {
+    "overwrite_output_dir": True,
+    "disable_tqdm": True,
+    "per_device_train_batch_size": 32,
+    "gradient_accumulation_steps": 1,
+    "optim": "adamw_torch",
+    "learning_rate": 1e-2,
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.99,
+    "max_grad_norm": 5.0,
+    "weight_decay": 0.0,
+    "lr_scheduler_type": "constant",
+    "warmup_steps": 0,
+    "max_steps": 10000,
+    "bf16": True,
+    "dataloader_num_workers": 4,
+    "logging_steps": 10,
+    "save_strategy": "steps",
+    "save_steps": 500,
+    "save_total_limit": 3,
+    "eval_strategy": "steps",
+    "eval_steps": 500,
+    "metric_for_best_model": "eval_loss",
+    "greater_is_better": False,
+    "load_best_model_at_end": True,
+    "ddp_find_unused_parameters": False,
+    "remove_unused_columns": False,
+    "label_names": ["labels"],
+    "ignore_data_skip": True,
+}
+
+GPT2_MODEL_CONFIG = {
+    "vocab_size": VOCAB_SIZE,
+    "n_positions": 1024,
+    "n_ctx": 1024,
+    "n_embd": 768,
+    "n_layer": 12,
+    "n_head": 12,
+    "n_inner": 3072,
+    "activation_function": "gelu_new",
+    "loss_type": "ForCausalLMLoss",
+    "resid_pdrop": 0.0,
+    "embd_pdrop": 0.0,
+    "attn_pdrop": 0.0,
+    "bos_token_id": BOS_TOKEN_ID,
+    "eos_token_id": EOS_TOKEN_ID,
+}
+
+GPT2_TRAINING_CONFIG = {
+    "overwrite_output_dir": True,
+    "disable_tqdm": False,
+    "per_device_train_batch_size": 32,
+    "gradient_accumulation_steps": 4,
+    "optim": "adamw_torch",
+    "learning_rate": 1e-4,
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.98,
+    "max_grad_norm": 0.0,
+    "weight_decay": 0.01,
+    "lr_scheduler_type": "inverse_sqrt",
+    "warmup_steps": 1000,
+    "max_steps": 100000,
+    "bf16": True,
+    "dataloader_num_workers": 4,
+    "logging_steps": 100,
+    "save_strategy": "steps",
+    "save_steps": 1000,
+    "save_total_limit": 20,
+    "eval_strategy": "steps",
+    "eval_steps": 1000,
+    "metric_for_best_model": "eval_loss",
+    "greater_is_better": False,
+    "load_best_model_at_end": True,
+    "ddp_find_unused_parameters": False,
+    "remove_unused_columns": False,
+    "label_names": ["labels"],
+    "ignore_data_skip": True,
+}
 
 
 # --- CUSTOM CALLBACK FOR LOGGING ---
@@ -94,126 +197,74 @@ class CustomCallback(TrainerCallback):
 
 
 if __name__ == "__main__":
+    # Parse arguments
+    parser = argparse.ArgumentParser(description="Train language model")
+    parser.add_argument(
+        "arch",
+        type=str,
+        choices=["lstm", "gpt2"],
+        help="Model architecture to train (lstm or gpt2)",
+    )
+    args = parser.parse_args()
+
     train_dir = "/scratch2/ddager/rapp/tokens/chunks30_spidr_base/"
     eval_dir = "/scratch2/ddager/rapp/tokens/chunks-eval_spidr_base/"
-    USE_LSTM = True
 
     train_dataset = TokenDataset(train_dir)
     eval_dataset = EvalDataset(eval_dir)
 
     if os.environ.get("RANK", "0") == "0":
-        print(f"Eval samples:  {len(eval_dataset)}")
+        print(f"Architecture: {args.arch.upper()}")
+        print(f"Eval samples: {len(eval_dataset)}")
 
-    if USE_LSTM:
-        # OPTIMAL CONFIG discovered through systematic debugging (Feb 2026)
-        # Results: Consistently achieves ~1.9 loss at step 40, ~1.7 at step 100
-        # Key findings:
-        #   - Smaller model (256/256/2) >> Larger model (200/1024/3 from paper)
-        #   - Higher LR (1e-2) with Adam works better than paper's AdamW 1e-4
-        #   - No dropout needed
-        #   - Gradient clipping at 5.0 prevents instability
-        config = LSTMConfig(
-            vocab_size=VOCAB_SIZE,
-            embedding_dim=256,
-            hidden_size=256,
-            num_layers=2,
-            dropout=0.0,
-            bos_token_id=BOS_TOKEN_ID,
-            eos_token_id=EOS_TOKEN_ID,
-        )
+    # Build model and config based on architecture
+    timestamp = get_model_timestamp()
+    
+    if args.arch == "lstm":
+        config = LSTMConfig(**LSTM_MODEL_CONFIG)
         model = LSTM(config)
-        run_name = f"lstm_h{config.hidden_size}_l{config.num_layers}_d{config.dropout}"
-    else:
-        config = GPT2Config(
-            vocab_size=VOCAB_SIZE,
-            n_positions=MAX_TOKENS,
-            n_ctx=MAX_TOKENS,
-            n_embd=768,
-            n_layer=12,
-            n_head=12,
-            n_inner=3072,
-            activation_function="gelu_new",
-            loss_type="ForCausalLMLoss",
-            resid_pdrop=0.1,
-            embd_pdrop=0.1,
-            attn_pdrop=0.1,
-            bos_token_id=BOS_TOKEN_ID,
-            eos_token_id=EOS_TOKEN_ID,
-        )
+        run_name = f"lstm_h{config.hidden_size}_l{config.num_layers}_d{config.dropout}_{timestamp}"
+        training_config = LSTM_TRAINING_CONFIG
+        early_stopping_patience = 5
+    elif args.arch == "gpt2":
+        config = GPT2Config(**GPT2_MODEL_CONFIG)
         model = GPT2LMHeadModel(config)
-        run_name = f"gpt2_e{config.n_embd}_l{config.n_layer}_h{config.n_head}"
+        run_name = f"gpt2_e{config.n_embd}_l{config.n_layer}_h{config.n_head}_{timestamp}"
+        training_config = GPT2_TRAINING_CONFIG
+        early_stopping_patience = 3
+    else:
+        raise ValueError(f"Unsupported architecture: {args.arch}")
 
+    # Create training arguments
     training_args = TrainingArguments(
         output_dir=f"./weights/{run_name}",
-        overwrite_output_dir=True,
-        disable_tqdm=True,
-        # Optimization - OPTIMAL CONFIG for LSTM (adjusted for 3 GPUs)
-        per_device_train_batch_size=32,
-        gradient_accumulation_steps=1,  # With 3 GPUs: 32×1×3=96 (close to tested 128)
-        optim="adamw_torch" if not USE_LSTM else "adamw_torch",  # Use AdamW for both (will override below for LSTM)
-        learning_rate=1e-2 if USE_LSTM else 5e-4,  # LSTM needs much higher LR than GPT2
-        adam_beta1=0.9,
-        adam_beta2=0.99 if USE_LSTM else 0.999,  # Slightly lower beta2 for LSTM
-        max_grad_norm=5.0,  # Critical for LSTM stability
-        weight_decay=0.0 if USE_LSTM else 0.01,  # No weight decay for LSTM
-        # Scheduling
-        lr_scheduler_type="constant",  # No schedule for LSTM, constant LR like debug tests
-        warmup_steps=0,  # No warmup needed - debug tests showed immediate convergence
-        max_steps=10000,
-        # Precision & Speed
-        bf16=True,
-        dataloader_num_workers=4,
-        # Logging & Saving
-        logging_steps=10,
-        save_strategy="steps",
-        save_steps=500,
-        save_total_limit=3,
-        # Evaluation
-        eval_strategy="steps",
-        eval_steps=500,
-        metric_for_best_model="loss",
-        greater_is_better=False,
-        load_best_model_at_end=True,
-        # DDP
-        ddp_find_unused_parameters=False,
-        remove_unused_columns=False,
-        label_names=["labels"],
-        ignore_data_skip=True,
+        **training_config,
     )
 
-    # Create custom optimizer for LSTM (use Adam not AdamW)
-    # WHY: AdamW applies weight decay differently than Adam:
-    #   - AdamW: Decoupled weight decay (proper L2 regularization on weights)
-    #   - Adam: Weight decay coupled with gradient (L2 penalty added to loss)
-    # For LSTMs, even with weight_decay=0.0, AdamW can behave differently due to
-    # implementation details. Our debug tests showed Adam with beta2=0.99 converges
-    # to ~1.9 loss by step 40, while AdamW (even with wd=0) plateaus at ~5.1.
-    # This is likely because:
-    #   1. LSTMs have different gradient dynamics than Transformers
-    #   2. Adam's coupling can help with sparse gradients in recurrent connections
-    #   3. AdamW's decoupling assumes dense gradient flow (better for Transformers)
-    if USE_LSTM:
-        import torch
+    # Create custom optimizer for LSTM
+    # Adam (not AdamW) is critical for LSTM convergence - see debug results
+    if args.arch == "lstm":
         optimizer = torch.optim.Adam(
             model.parameters(),
             lr=training_args.learning_rate,
             betas=(training_args.adam_beta1, training_args.adam_beta2),
             eps=training_args.adam_epsilon,
         )
-        optimizers = (optimizer, None)  # (optimizer, lr_scheduler)
-    else:
-        optimizers = (None, None)  # Use default AdamW
+        optimizers = (optimizer, None)
+    elif args.arch == "gpt2":
+        optimizers = (None, None)
 
+    # Create trainer
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=collate_fn,
-        optimizers=optimizers,  # Pass custom optimizer for LSTM
+        optimizers=optimizers,
         callbacks=[
-            CustomCallback(use_lstm=USE_LSTM),
-            EarlyStoppingCallback(early_stopping_patience=5),
+            CustomCallback(use_lstm=(args.arch == "lstm")),
+            EarlyStoppingCallback(early_stopping_patience=early_stopping_patience),
         ],
     )
     trainer.pop_callback(PrinterCallback)

@@ -10,6 +10,9 @@
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
 
+# Get architecture from first argument (default: lstm)
+ARCH="${1:-lstm}"
+
 # Extract number of GPUs from SLURM gres parameter
 NUM_GPUS=$(echo $SLURM_STEP_GPUS | tr "," "\n" | wc -l)
 
@@ -22,5 +25,6 @@ uv run --frozen torchrun \
     --nproc_per_node=$NUM_GPUS \
     --nnodes=1 \
     scripts/train/train.py \
+    $ARCH
 
 echo "Completed at: $(date)"

@@ -1,15 +1,6 @@
 from torch import nn
-
-from transformers import (
-    PretrainedConfig,
-    PreTrainedModel,
-)
-
-from scripts.train.datasets import (
-    VOCAB_SIZE,
-    BOS_TOKEN_ID,
-    EOS_TOKEN_ID,
-)
+from transformers import PretrainedConfig, PreTrainedModel
+from scripts.train.datasets import VOCAB_SIZE, BOS_TOKEN_ID, EOS_TOKEN_ID
 
 
 class LSTMConfig(PretrainedConfig):
@@ -26,11 +17,7 @@ class LSTMConfig(PretrainedConfig):
         eos_token_id=EOS_TOKEN_ID,
         **kwargs,
     ):
-        super().__init__(
-            bos_token_id=bos_token_id,
-            eos_token_id=eos_token_id,
-            **kwargs,
-        )
+        super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
         self.vocab_size = vocab_size
         self.embedding_dim = embedding_dim
         self.hidden_size = hidden_size
@@ -52,44 +39,34 @@ class LSTM(PreTrainedModel):
             batch_first=True,
         )
         self.output = nn.Linear(config.hidden_size, config.vocab_size)
-
-        # Initialize weights
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
-        """Initialize model weights."""
-        if isinstance(module, nn.Embedding):
+        """Initialize weights with LSTM-specific best practices."""
+        if isinstance(module, (nn.Embedding, nn.Linear)):
             module.weight.data.normal_(mean=0.0, std=0.02)
-        elif isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=0.02)
-            if module.bias is not None:
+            if hasattr(module, "bias") and module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.LSTM):
-            # LSTM-specific initialization for better gradient flow
             for name, param in module.named_parameters():
                 if "weight_ih" in name:
-                    # Input-hidden weights: Xavier uniform
                     nn.init.xavier_uniform_(param.data)
                 elif "weight_hh" in name:
-                    # Hidden-hidden weights: Orthogonal (crucial for LSTMs)
+                    # Orthogonal init for recurrent weights helps gradient flow
                     nn.init.orthogonal_(param.data)
                 elif "bias" in name:
-                    # Set biases to zero, except forget gate bias to 1.0
                     param.data.zero_()
-                    # Forget gate is the second quarter of the bias vector
+                    # Forget gate bias = 1.0 (standard LSTM practice)
                     n = param.size(0)
                     param.data[n // 4 : n // 2].fill_(1.0)
 
     def forward(self, input_ids, labels=None, attention_mask=None, **kwargs):
         embeddings = self.embedding(input_ids)
-
-        # Standard LSTM forward pass (no packing since we use fixed blocks)
         lstm_output, _ = self.lstm(embeddings)
         logits = self.output(lstm_output)
 
         loss = None
         if labels is not None:
-            # Shift for next-token prediction
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             loss_fct = nn.CrossEntropyLoss()
